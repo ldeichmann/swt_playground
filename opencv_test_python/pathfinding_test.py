@@ -3,6 +3,7 @@ import numpy as np
 import logging
 import sys
 import heapq
+import copy
 from math import sqrt
 
 log = logging.getLogger(__name__)
@@ -44,12 +45,23 @@ class GridRectangle(Rectangle):
     FREE = 0
     CONE = 10
     OBSTACLE = 20
-    WAYPOINT = 30
+    AVOID = 30
+    WAYPOINT = 40
+
+    N = 200
+    NE = 210
+    E = 220
+    SE = 230
+    S = 240
+    SW = 250
+    W = 260
+    NW = 270
 
     def __init__(self, center_x, center_y, width, height, x_coordinate, y_coordinate, occupied=FREE):
         super().__init__(center_x, center_y, width, height)
         self.coordinates = (x_coordinate, y_coordinate)
         self.occupied = occupied
+        self.direction = None
 
     def passable(self):
         return self.occupied == GridRectangle.FREE or self.occupied == GridRectangle.WAYPOINT
@@ -59,6 +71,16 @@ class GridRectangle(Rectangle):
 
     def __gt__(self, rect2):
         return self.coordinates[0] > rect2.coordinates[0] and self.coordinates[1] > rect2.coordinates[1]
+
+    def same(self, rect2):
+        if self.direction is not None and rect2.direction is not None:
+            return self.coordinates == rect2.coordinates and self.direction == rect2.direction
+        else:
+            return self.coordinates == rect2.coordinates
+
+    def __str__(self):
+        return "coordinates: {} - occupied: {}".format(self.coordinates, self.occupied)
+
 
 class Grid:
     """
@@ -125,6 +147,26 @@ class Grid:
                 log.debug("Checking {} {}".format(current_row, current_col))
                 if intersects:
                     slot.set_occupied(obstacle_type)
+                    if obstacle_type == GridRectangle.OBSTACLE:
+                        for neighbor in self.neighbors(slot, directional=False):
+                            if neighbor.occupied == GridRectangle.FREE or \
+                                            neighbor.occupied == GridRectangle.AVOID:
+                                neighbor.set_occupied(GridRectangle.AVOID)
+                            for second_neighbor in self.neighbors(neighbor, directional=False):
+                                if second_neighbor.occupied == GridRectangle.FREE or \
+                                                second_neighbor.occupied == GridRectangle.AVOID:
+                                    second_neighbor.set_occupied(GridRectangle.AVOID)
+                                for third_neighbor in self.neighbors(second_neighbor, directional=False):
+                                    if third_neighbor.occupied == GridRectangle.FREE or \
+                                                    third_neighbor.occupied == GridRectangle.AVOID:
+                                        third_neighbor.set_occupied(GridRectangle.AVOID)
+
+                    if obstacle_type == GridRectangle.CONE:
+                        for neighbor in self.neighbors(slot, directional=False):
+                            if neighbor.occupied == GridRectangle.FREE or \
+                                            neighbor.occupied == GridRectangle.AVOID:
+                                neighbor.set_occupied(GridRectangle.AVOID)
+
                     log.debug("Occupying {} {}".format(current_row, current_col))
                     row_started = True
                     rows_started = True
@@ -149,7 +191,7 @@ class Grid:
 
     def rect_in_bounds(self, coordinates):
         log.debug("rect_in_bounds {}".format(coordinates))
-        x, y = coordinates
+        x, y, direction = coordinates
         log.debug("{}".format(0 <= y < self.columns and 0 <= x < self.rows))
         return 0 <= y < self.columns and 0 <= x < self.rows
 
@@ -157,32 +199,66 @@ class Grid:
     def rect_passable(rect):
         return rect.passable()
 
-    def neighbors(self, rect):
+    def neighbors(self, rect, directional=True):
         try:
             (x, y) = rect.coordinates
+            direction = rect.direction
         except AttributeError:
             y, x = self.get_index_from_position(rect.x, rect.y)
+            direction = None
         result_rects = []
 
-        results = [(x+1, y), (x, y-1), (x-1, y), (x, y+1)]
+        N = (x, y - 1, GridRectangle.N)
+        NE = (x + 1, y - 1, GridRectangle.NE)
+        E = (x + 1, y, GridRectangle.E)
+        SE = (x + 1, y + 1, GridRectangle.SE)
+        S = (x, y + 1, GridRectangle.S)
+        SW = (x - 1, y + 1, GridRectangle.SW)
+        W = (x - 1, y, GridRectangle.W)
+        NW = (x - 1, y - 1, GridRectangle.NW)
+
+        if directional:
+            if direction == GridRectangle.N:
+                results = [NW, N, NE]
+            elif direction == GridRectangle.NE:
+                results = [N, NE, E]
+            elif direction == GridRectangle.E:
+                results = [NE, E, SE]
+            elif direction == GridRectangle.SE:
+                results = [E, SE, S]
+            elif direction == GridRectangle.S:
+                results = [SE, S, SW]
+            elif direction == GridRectangle.SW:
+                results = [S, SW, W]
+            elif direction == GridRectangle.W:
+                results = [SW, W, NW]
+            elif direction == GridRectangle.NW:
+                results = [W, NW, N]
+            else:
+                results = [N, NE, E, SE, S, SW, W, NW]
+        else:
+            results = [N, NE, E, SE, S, SW, W, NW]
+
         if (x + y) % 2 == 0: results.reverse()  # aesthetics
         results = list(filter(self.rect_in_bounds, results))
         for result in results:
-            result_rects.append(self.grid[result[1]][result[0]])
+            if directional:
+                rect = copy.copy(self.grid[result[1]][result[0]])
+                rect.direction = result[2]
+                result_rects.append(rect)
+            else:
+                rect = self.grid[result[1]][result[0]]
+                result_rects.append(rect)
         result_rects = list(filter(self.rect_passable, result_rects))
         log.debug("for rect {} - results {} - result_rects {}".format(rect, list(results), result_rects))
         return result_rects
 
     def cost(self, from_node, to_node):
-        neighbours = self.neighbors(to_node)
-        for neighbour in neighbours:
-            if neighbour.occupied == GridRectangle.OBSTACLE:
-                return 10000
-            elif neighbour.occupied == GridRectangle.CONE:
-                return 10000
-        if from_node.x != to_node.x and from_node.y != to_node.y:
-            return 50
-        return 1
+        if to_node.occupied == GridRectangle.AVOID:
+            return 50000
+        if from_node.direction != to_node.direction:
+            return 100
+        return 0
 
 
 class Pathfinding:
@@ -207,9 +283,10 @@ class Pathfinding:
         # self.waypoints = sorted(waypoints, key=lambda waypoint: waypoint.)
 
     def heuristic(self, start, goal, node):
-        max_dist = start.distance(goal)
-        # return abs(goal.distance(node) - max_dist)
-        return abs((goal.distance(node)/max_dist)*100)
+        # max_dist = start.distance(goal)
+        # # return abs(goal.distance(node) - max_dist)
+        # return abs((goal.distance(node)/max_dist)*100)
+        return abs((goal.distance(node)))
 
     def search(self, start, goal):
         log.info("Finding path from {} to {}".format(start, goal))
@@ -219,12 +296,14 @@ class Pathfinding:
         cost_so_far = {}
         came_from[start] = None
         cost_so_far[start] = 0
+        current = None
 
         while not frontier.empty():
             current = frontier.get()
 
-            if current == goal:
+            if current.same(goal):
                 log.debug("Found a path, breaking")
+                # log.debug("Path is: {}".format(came_from))
                 break
 
             log.debug("Checking neighbours for {}".format(current))
@@ -236,19 +315,28 @@ class Pathfinding:
                     frontier.put(next, priority)
                     came_from[next] = current
 
-        return came_from, cost_so_far
+        return came_from, cost_so_far, current
 
     def test_path(self):
         if len(self.waypoints) > 1:
-            start_wp = self.waypoints[0]
-            start_x, start_y = self.grid.get_index_from_position(start_wp.x, start_wp.y)
-            goal_wp = self.waypoints[1]
-            goal_x, goal_y = self.grid.get_index_from_position(goal_wp.x, goal_wp.y)
+            paths = []
+            last_finish = None
+            for i in range(len(self.waypoints)-1):
+                if not last_finish:
+                    start_wp = self.waypoints[i]
+                    start_x, start_y = self.grid.get_index_from_position(start_wp.x, start_wp.y)
+                    start = self.grid.grid[start_y][start_x]
+                else:
+                    start = last_finish
+                goal_wp = self.waypoints[i+1]
+                goal_x, goal_y = self.grid.get_index_from_position(goal_wp.x, goal_wp.y)
 
-            start = self.grid.grid[start_y][start_x]
-            finish = self.grid.grid[goal_y][goal_x]
+                finish = self.grid.grid[goal_y][goal_x]
 
-            return self.search(start, finish), finish
+                result, cost, last_finish = self.search(start, finish)
+                paths.append((result, last_finish))
+
+            return paths
         return None, None
 
 
@@ -443,13 +531,15 @@ class CV:
 
         if self.grid and self.pathfinding:
             pf = Pathfinding(self.grid, waypoints)
-            test_path_tuple, finish = pf.test_path()
-            if test_path_tuple:
-                test_path = test_path_tuple[0]
-                rect = test_path.get(finish)
-                while rect:
-                    self.draw_border(rect, tmp, (0,252,124))
-                    rect = test_path.get(rect)
+            paths = pf.test_path()
+            if paths:
+                for path, finish in paths:
+                    rect = path.get(finish)
+                    log.debug("Drawing {}".format(rect))
+                    while rect:
+                        log.debug("Drawing2 {}".format(rect))
+                        self.draw_border(rect, tmp, (0,252,124))
+                        rect = path.get(rect)
 
                 # for rect in test_path:
                 #     self.draw_border(rect, tmp, (0, 123, 123))
@@ -477,6 +567,8 @@ class CV:
                         cv2.rectangle(image, (x, y), (x2, y2), (0, 0, 0), -1)
                     elif slot.occupied == GridRectangle.CONE:
                         cv2.rectangle(image, (x, y), (x2, y2), (0, 165, 255), -1)
+                    elif slot.occupied == GridRectangle.AVOID:
+                        cv2.rectangle(image, (x, y), (x2, y2), (100, 100, 100), -1)
                     else:
                         cv2.rectangle(image, (x, y), (x2, y2), (255, 255, 255), self.bWidth)
 
