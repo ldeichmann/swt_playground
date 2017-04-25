@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import logging
 import sys
-import collections
+import heapq
 from math import sqrt
 
 log = logging.getLogger(__name__)
@@ -56,6 +56,9 @@ class GridRectangle(Rectangle):
 
     def set_occupied(self, new_occupied):
         self.occupied = new_occupied
+
+    def __gt__(self, rect2):
+        return self.coordinates[0] > rect2.coordinates[0] and self.coordinates[1] > rect2.coordinates[1]
 
 class Grid:
     """
@@ -170,21 +173,32 @@ class Grid:
         log.debug("for rect {} - results {} - result_rects {}".format(rect, list(results), result_rects))
         return result_rects
 
+    def cost(self, from_node, to_node):
+        neighbours = self.neighbors(to_node)
+        for neighbour in neighbours:
+            if neighbour.occupied == GridRectangle.OBSTACLE:
+                return 10000
+            elif neighbour.occupied == GridRectangle.CONE:
+                return 10000
+        if from_node.x != to_node.x and from_node.y != to_node.y:
+            return 50
+        return 1
+
 
 class Pathfinding:
 
-    class Queue:
+    class PriorityQueue:
         def __init__(self):
-            self.elements = collections.deque()
+            self.elements = []
 
         def empty(self):
             return len(self.elements) == 0
 
-        def put(self, x):
-            self.elements.append(x)
+        def put(self, item, priority):
+            heapq.heappush(self.elements, (priority, item))
 
         def get(self):
-            return self.elements.popleft()
+            return heapq.heappop(self.elements)[1]
 
     def __init__(self, grid, waypoints):
         self.grid = grid
@@ -192,12 +206,19 @@ class Pathfinding:
         # TODO: Sort by distance
         # self.waypoints = sorted(waypoints, key=lambda waypoint: waypoint.)
 
-    def breadth_first_search_3(self, start, goal):
+    def heuristic(self, start, goal, node):
+        max_dist = start.distance(goal)
+        # return abs(goal.distance(node) - max_dist)
+        return abs((goal.distance(node)/max_dist)*100)
+
+    def search(self, start, goal):
         log.info("Finding path from {} to {}".format(start, goal))
-        frontier = self.Queue()
-        frontier.put(start)
+        frontier = self.PriorityQueue()
+        frontier.put(start, 0)
         came_from = {}
+        cost_so_far = {}
         came_from[start] = None
+        cost_so_far[start] = 0
 
         while not frontier.empty():
             current = frontier.get()
@@ -208,10 +229,14 @@ class Pathfinding:
 
             log.debug("Checking neighbours for {}".format(current))
             for next in self.grid.neighbors(current):
-                if next not in came_from:
-                    frontier.put(next)
+                new_cost = cost_so_far[current] + self.grid.cost(current, next)
+                if next not in cost_so_far or new_cost < cost_so_far[next]:
+                    cost_so_far[next] = new_cost
+                    priority = new_cost + self.heuristic(start, goal, next)
+                    frontier.put(next, priority)
                     came_from[next] = current
-        return came_from
+
+        return came_from, cost_so_far
 
     def test_path(self):
         if len(self.waypoints) > 1:
@@ -223,7 +248,7 @@ class Pathfinding:
             start = self.grid.grid[start_y][start_x]
             finish = self.grid.grid[goal_y][goal_x]
 
-            return self.breadth_first_search_3(start, finish), finish
+            return self.search(start, finish), finish
         return None, None
 
 
@@ -418,8 +443,9 @@ class CV:
 
         if self.grid and self.pathfinding:
             pf = Pathfinding(self.grid, waypoints)
-            test_path, finish = pf.test_path()
-            if test_path:
+            test_path_tuple, finish = pf.test_path()
+            if test_path_tuple:
+                test_path = test_path_tuple[0]
                 rect = test_path.get(finish)
                 while rect:
                     self.draw_border(rect, tmp, (0,252,124))
