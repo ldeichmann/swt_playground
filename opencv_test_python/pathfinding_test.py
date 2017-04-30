@@ -253,9 +253,11 @@ class Grid:
         log.debug("for rect {} - results {} - result_rects {}".format(rect, list(results), result_rects))
         return result_rects
 
-    def cost(self, from_node, to_node):
+    def cost(self, previous, from_node, to_node):
         if to_node.occupied == GridRectangle.AVOID:
             return 50000
+        # if previous and previous.direction != from_node.direction and from_node.direction != to_node.direction:
+        #     return 10000
         if from_node.direction != to_node.direction:
             return 100
         return 0
@@ -299,6 +301,7 @@ class Pathfinding:
         current = None
 
         while not frontier.empty():
+            previous = current
             current = frontier.get()
 
             if current.same(goal):
@@ -308,7 +311,7 @@ class Pathfinding:
 
             log.debug("Checking neighbours for {}".format(current))
             for next in self.grid.neighbors(current):
-                new_cost = cost_so_far[current] + self.grid.cost(current, next)
+                new_cost = cost_so_far[current] + self.grid.cost(previous, current, next)
                 if next not in cost_so_far or new_cost < cost_so_far[next]:
                     cost_so_far[next] = new_cost
                     priority = new_cost + self.heuristic(start, goal, next)
@@ -483,9 +486,23 @@ class CV:
         pairs = self.get_cone_pairs(cones, MIN_POLLER_DIST, MAX_POLLER_DIST)
         waypoints = self.get_gate_waypoints(pairs)
 
+        # sort waypoints
+        if len(waypoints) > 1:
+            sorted_waypoints = [waypoints[1]]
+            while len(sorted_waypoints) < len(waypoints):
+                closest_waypoint = None
+                for waypoint in waypoints:
+                    if waypoint not in sorted_waypoints:
+                        if not closest_waypoint:
+                            closest_waypoint = waypoint
+                        if sorted_waypoints[-1].distance(waypoint) < sorted_waypoints[-1].distance(closest_waypoint):
+                            closest_waypoint = waypoint
+                sorted_waypoints.append(closest_waypoint)
+            waypoints = sorted_waypoints
+
 
         # create grid
-        if len(cones) > 0 or len(obstacles) > 0:
+        if (len(cones) > 1 or len(obstacles) > 1) and (self.draw_grid or self.pathfinding):
             objects = cones + obstacles
             contours, boxes = self.sort_contours(cones)
             box_left = boxes[0]
@@ -599,8 +616,9 @@ class CV:
 
     def trackbar_value_changed(self, trackbar):
         if self.initialized:
-            self._update_trackbar_values()
-            self.update()
+            # self._update_trackbar_values()
+            # self.update()
+            pass
 
     def create_windows(self):
         cv2.namedWindow('image')
@@ -628,8 +646,6 @@ class CV:
         cv2.setTrackbarPos('HMax', 'controls', 179)
         cv2.setTrackbarPos('SMax', 'controls', 255)
         cv2.setTrackbarPos('VMax', 'controls', 255)
-        cv2.setTrackbarPos('DistMax', 'controls', 7)
-        cv2.setTrackbarPos('DistMin', 'controls', 4)
 
         # Set default value for MIN.
         cv2.setTrackbarPos('HMin', 'controls', 0)
@@ -637,13 +653,17 @@ class CV:
         cv2.setTrackbarPos('VMin', 'controls', 95)
         cv2.setTrackbarPos('Path', 'controls', 1)
 
+        cv2.setTrackbarPos('DistMax', 'controls', 7)
+        cv2.setTrackbarPos('DistMin', 'controls', 4)
+        cv2.setTrackbarPos('NoiseFilter', 'controls', 5)
+
         self.initialized = True
 
     def start(self):
         while 1:
             self._update_trackbar_values()
             self.update()
-            WAIT = 2000
+            WAIT = 33
             k = cv2.waitKey(WAIT) & 0xFF
             if k == 27:
                 break
