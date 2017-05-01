@@ -49,7 +49,7 @@ phMin = psMin = pvMin = phMax = psMax = pvMax = 0
 while 1:
     ret, img = cap.read()
     if img is None:
-        cap.set(cv2.cv.CV_CAP_PROP_POS_FRAMES, 0)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         ret, img = cap.read()
     output = img
     temp = img.copy()
@@ -106,7 +106,7 @@ while 1:
     cv2.imshow('image', temp)
     cv2.imshow('hsv_image', output)
 
-    WAIT = 200
+    WAIT = 33
     # Wait for 33 milliseconds: 30FPS
     k = cv2.waitKey(WAIT) & 0xFF
     if k == 27:
